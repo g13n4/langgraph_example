@@ -1,0 +1,4 @@
+.env is left in the repository on purpose
+Location data is from [repo](https://github.com/dr5hn/countries-states-cities-database/tree/master/psql). (file world.sql). It should be in sql folder during db initialization
+You can generate data with generate_mock_data.py
+You can re-compile wheel file with rust/pyo3/maturin 
