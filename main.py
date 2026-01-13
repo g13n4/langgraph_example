@@ -12,10 +12,11 @@ from langchain_core.tools import tool
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_postgres.vectorstores import PGVector
 from langgraph.graph import END, START, StateGraph, add_messages
-from retrieval_graph.state import AgentState
 
 from db_query import get_city_location
 from distance_calculator import calculate_route
+from pydantic import BaseModel
+
 
 llm_model = ChatOllama(model=LOCAL_MODEL_NAME)
 system_prompt = (
@@ -26,8 +27,7 @@ db_vector = PGVector(
     OllamaEmbeddings(model=LOCAL_MODEL_NAME), connection=PSQL_CONNECTION_URI
 )
 
-
-class State(TypedDict):
+class State(BaseModel):
     messages: Annotated[list, add_messages]
 
     cities_to_visit: List[str]
@@ -43,7 +43,7 @@ class State(TypedDict):
     selected_tool: Optional[str] = None
     tool_input: str = ""
     tool_output: str = ""
-
+    status: str = "CONTINUE"
 
 @tool
 async def give_advice(state: State) -> State:
@@ -115,8 +115,8 @@ async def calculate_perfect_route(state: State) -> State:
         city = item["city"]
         country = item["country"] if item["country"] != "_" else None
 
-        db_output = get_city_location(city=city, country=country) or get_city_location(
-            city=city, country=country, regex=True
+        db_output = get_city_location(city_name=city, country=country) or get_city_location(
+            city_name=city, country=country, regex=True
         )
         if db_output is None:
             key = f"{city}, {country}"
@@ -139,7 +139,7 @@ async def calculate_perfect_route(state: State) -> State:
 
         output = [name for name in location_map.keys()]
         # offset list so the home city will be the first place to leave
-        offset_index = routes_names_in_optimal_order.index(key)
+        offset_index = routes_names_in_optimal_order.index(home_city)
         if offset_index:
             output = output[offset_index:] + output[:offset_index]
 
@@ -176,8 +176,9 @@ tools = [give_advice, calculate_perfect_route]
 
 
 # We use a simple prompt based tool picker instead of using in-memory vector based one
+
 @tool
-async def tool_or_not(state):
+async def tool_or_not(state: State) -> State:
     prompt = """
         Consider user input, history of your conversation and tools, think about what you want to do next:
         User input: {state.current_input}
@@ -191,47 +192,45 @@ async def tool_or_not(state):
 
     response = await llm_model.ainvoke(prompt)
     result = json.loads(response.content)
-    return AgentState(
-        **state.dict(),
-        thought=result["thought"],
+    return State(
+        **state.model_dump(),
         selected_tool=result.get("tool"),
         tool_input=result.get("tool_input"),
         status="NEED_TOOL" if result["need_tool"] else "CONTINUE",
     )
 
 
-async def execute_tool(state: AgentState) -> AgentState:
+async def execute_tool(state: State) -> State:
     """Execute tool call"""
-    tool = next((t for t in tools if t.name == state.selected_tool), None)
-    if not tool:
-        return await AgentState(
-            **state.dict(),
+    use_tool = next((t for t in tools if t.name == state.selected_tool), None)
+    if not use_tool:
+        return await State(
+            **state.model_dump(),
             status="ERROR",
             selected_tool=None,
             tool_input="",
             tool_output="",
         )
     try:
-        state = await tool.func.ainvoke(state.tool_input)
-        return AgentState(
-            **state.dict(),
+        state = await use_tool.func.ainvoke(state.tool_input)
+        return State(
+            **state.model_dump(),
             status="CONTINUE",
             selected_tool=None,
             tool_input="",
             tool_output="",
         )
     except Exception as e:
-        return await AgentState(
-            **state.dict(),
+        return await State(
+            **state.model_dump(),
             status="ERROR",
-            thought=f"Tool execution failed: {str(e)}",
             selected_tool=None,
             tool_input="",
             tool_output="",
         )
 
 
-async def chatbot(state: AgentState):
+async def chatbot(state: State):
     answer = await llm_model.ainvoke([SystemMessage(system_prompt)] + state["messages"])
     return {"messages": [answer]}
 
@@ -244,17 +243,10 @@ builder.add_node("execute_tool", execute_tool)
 builder.add_edge(START, "chatbot")
 builder.add_edge("chatbot", "tool_or_not")
 builder.add_conditional_edges(
-    "tool_or_not", "chatbot", condition=lambda s: s.status == "CONTINUE"
+    "tool_or_not",  lambda s: "execute_tool" if s.status != "CONTINUE" else "chatbot"
 )
 builder.add_conditional_edges(
-    "tool_or_not", "execute_tool", condition=lambda s: s.status != "CONTINUE"
-)
-builder.add_conditional_edges(
-    "execute_tool", "chatbot", condition=lambda s: s.status == "CONTINUE"
-)
-builder.add_conditional_edges(
-    "execute_tool", END, condition=lambda s: s.status != "CONTINUE"
-)
+    "execute_tool", lambda s: "chatbot" if s.status == "CONTINUE" else END)
 
 graph = builder.compile()
 graph.name = "TravelHelper"

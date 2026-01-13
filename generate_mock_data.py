@@ -44,7 +44,7 @@ def save_story_to_file(country: str, city: str, text: str) -> None:
         print(f"Ad guide for {city}, {country} saved to {save_path}")
     
     except IOError as e:
-        raise (f"Error saving file for {city}, {country}\n{e}")
+        raise f"Error saving file for {city}, {country}\n{e}"
 
     return None
 

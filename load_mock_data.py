@@ -7,13 +7,13 @@ import re
 
 import os
 import uuid
-from conts import LOCAL_MODEL_NAME, PSQL_CONNECTION_URI
+from const import LOCAL_MODEL_NAME, PSQL_CONNECTION_URI
 
 SAVE_PATH = pathlib.Path("./mock_data")
 
 documents = list()
 for file_name in os.scandir(SAVE_PATH):
-    country, city, *_ = re.split(r"[\.\-]", file_name.name)
+    country, city, *_ = re.split(r"[.\-]", file_name.name)
     with open(file_name, "r", encoding="utf-8") as file:
         documents.append(
         Document(
