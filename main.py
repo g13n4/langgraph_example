@@ -1,11 +1,12 @@
 import json
-from typing import Annotated, List, Optional, TypedDict
+from typing import Annotated, List, Optional
 
 from const import LOCAL_MODEL_NAME, PSQL_CONNECTION_URI
 from langchain_core.documents import Document
 from langchain_core.messages import (
     AIMessage,
     SystemMessage,
+    HumanMessage,
     filter_messages,
 )
 from langchain_core.tools import tool
@@ -77,7 +78,7 @@ async def give_advice(state: State) -> State:
     else:
         message = await llm_model.ainvoke(
             """
-            You are a helpful travel agency worker. Recommend destinations for travel using provdied information as base for your assessment.\n
+            You are a helpful travel agency worker. Recommend destinations for travel using provided information as base for your assessment.\n
             """
             + generalized_context.content
         )
@@ -146,7 +147,7 @@ async def calculate_perfect_route(state: State) -> State:
         response = await llm_model.ainvoke(
             """
         You are a helpful assistant in a travel agency. Create a traveling schedule considering the guide of traveling provided. 
-        Don't change the travilng information order. Only provide traveling guidance.
+        Don't change the traveling information order. Only provide traveling guidance.
         """
             + (
                 ""
@@ -177,7 +178,6 @@ tools = [give_advice, calculate_perfect_route]
 
 # We use a simple prompt based tool picker instead of using in-memory vector based one
 
-@tool
 async def tool_or_not(state: State) -> State:
     prompt = """
         Consider user input, history of your conversation and tools, think about what you want to do next:
@@ -231,7 +231,13 @@ async def execute_tool(state: State) -> State:
 
 
 async def chatbot(state: State):
-    answer = await llm_model.ainvoke([SystemMessage(system_prompt)] + state["messages"])
+    # your test input
+    human_prompt = input()
+
+    # readd system prompt to ensure it was not reset previously
+    answer = await llm_model.ainvoke([SystemMessage(system_prompt), HumanMessage(human_prompt)])
+
+    # let reducer take care of appending the message
     return {"messages": [answer]}
 
 
